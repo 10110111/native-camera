@@ -21,6 +21,10 @@ android {
                         "-DANDROID_PLATFORM=android-24"
             }
         }
+        ndk {
+            abiFilters 'armeabi-v7a'
+        }
+
     }
     buildTypes {
         release {

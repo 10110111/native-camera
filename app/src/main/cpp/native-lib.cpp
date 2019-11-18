@@ -1,8 +1,9 @@
 #include <jni.h>
+#include <map>
 #include <string>
 #include <fstream>
 #include <vector>
-#include <thread>
+#include <future>
 
 #include <camera/NdkCameraManager.h>
 #include <camera/NdkCameraMetadata.h>
@@ -13,437 +14,182 @@
 #include <GLES2/gl2ext.h>
 
 #include "log.h"
-#include "gl_helper.h"
 #include "cam_utils.h"
 
 
-using namespace sixo;
-
-
-/**
- * Variables used to initialize and manage native camera
- */
+const std::map<media_status_t, const char*> mediaStatusNames={
+    {AMEDIA_OK                              , "OK"},
+    {AMEDIACODEC_ERROR_INSUFFICIENT_RESOURCE, "CODEC_ERROR_INSUFFICIENT_RESOURCE"},
+    {AMEDIACODEC_ERROR_RECLAIMED            , "CODEC_ERROR_RECLAIMED"},
+    {AMEDIA_ERROR_BASE                      , "ERROR_BASE"},
+    {AMEDIA_ERROR_UNKNOWN                   , "ERROR_UNKNOWN"},
+    {AMEDIA_ERROR_MALFORMED                 , "ERROR_MALFORMED"},
+    {AMEDIA_ERROR_UNSUPPORTED               , "ERROR_UNSUPPORTED"},
+    {AMEDIA_ERROR_INVALID_OBJECT            , "ERROR_INVALID_OBJECT"},
+    {AMEDIA_ERROR_INVALID_PARAMETER         , "ERROR_INVALID_PARAMETER"},
+    {AMEDIA_ERROR_INVALID_OPERATION         , "ERROR_INVALID_OPERATION"},
+    {AMEDIA_ERROR_END_OF_STREAM             , "ERROR_END_OF_STREAM"},
+    {AMEDIA_ERROR_IO                        , "ERROR_IO"},
+    {AMEDIA_ERROR_WOULD_BLOCK               , "ERROR_WOULD_BLOCK"},
+    {AMEDIA_DRM_ERROR_BASE                  , "DRM_ERROR_BASE"},
+    {AMEDIA_DRM_NOT_PROVISIONED             , "DRM_NOT_PROVISIONED"},
+    {AMEDIA_DRM_RESOURCE_BUSY               , "DRM_RESOURCE_BUSY"},
+    {AMEDIA_DRM_DEVICE_REVOKED              , "DRM_DEVICE_REVOKED"},
+    {AMEDIA_DRM_SHORT_BUFFER                , "DRM_SHORT_BUFFER"},
+    {AMEDIA_DRM_SESSION_NOT_OPENED          , "DRM_SESSION_NOT_OPENED"},
+    {AMEDIA_DRM_TAMPER_DETECTED             , "DRM_TAMPER_DETECTED"},
+    {AMEDIA_DRM_VERIFY_FAILED               , "DRM_VERIFY_FAILED"},
+    {AMEDIA_DRM_NEED_KEY                    , "DRM_NEED_KEY"},
+    {AMEDIA_DRM_LICENSE_EXPIRED             , "DRM_LICENSE_EXPIRED"},
+    {AMEDIA_IMGREADER_ERROR_BASE            , "IMGREADER_ERROR_BASE"},
+    {AMEDIA_IMGREADER_NO_BUFFER_AVAILABLE   , "IMGREADER_NO_BUFFER_AVAILABLE"},
+    {AMEDIA_IMGREADER_MAX_IMAGES_ACQUIRED   , "IMGREADER_MAX_IMAGES_ACQUIRED"},
+    {AMEDIA_IMGREADER_CANNOT_LOCK_IMAGE     , "IMGREADER_CANNOT_LOCK_IMAGE"},
+    {AMEDIA_IMGREADER_CANNOT_UNLOCK_IMAGE   , "IMGREADER_CANNOT_UNLOCK_IMAGE"},
+    {AMEDIA_IMGREADER_IMAGE_NOT_LOCKED      , "IMGREADER_IMAGE_NOT_LOCKED"},
+};
 
 static ACameraManager* cameraManager = nullptr;
-
 static ACameraDevice* cameraDevice = nullptr;
-
-static ACameraOutputTarget* textureTarget = nullptr;
-
 static ACaptureRequest* request = nullptr;
-
-static ANativeWindow* textureWindow = nullptr;
-
-static ACameraCaptureSession* textureSession = nullptr;
-
-static ACaptureSessionOutput* textureOutput = nullptr;
-
-#ifdef WITH_IMAGE_READER
 static ANativeWindow* imageWindow = nullptr;
-
 static ACameraOutputTarget* imageTarget = nullptr;
-
 static AImageReader* imageReader = nullptr;
-
 static ACaptureSessionOutput* imageOutput = nullptr;
-#endif
-
 static ACaptureSessionOutput* output = nullptr;
-
 static ACaptureSessionOutputContainer* outputs = nullptr;
 
+static unsigned rawWidth, rawHeight;
+static const auto desiredFormat=AIMAGE_FORMAT_RAW16;
 
-/**
- * GL stuff - mostly used to draw the frames captured
- * by camera into a SurfaceTexture
- */
-
-static GLuint prog;
-static GLuint vtxShader;
-static GLuint fragShader;
-
-static GLint vtxPosAttrib;
-static GLint uvsAttrib;
-static GLint mvpMatrix;
-static GLint texMatrix;
-static GLint texSampler;
-static GLint color;
-static GLint size;
-static GLuint buf[2];
-static GLuint textureId;
-
-static int width = 640;
-static int height = 480;
-
-static const char* vertexShaderSrc = R"(
-        precision highp float;
-        attribute vec3 vertexPosition;
-        attribute vec2 uvs;
-        varying vec2 varUvs;
-        uniform mat4 texMatrix;
-        uniform mat4 mvp;
-
-        void main()
-        {
-            varUvs = (texMatrix * vec4(uvs.x, uvs.y, 0, 1.0)).xy;
-            gl_Position = mvp * vec4(vertexPosition, 1.0);
-        }
-)";
-
-static const char* fragmentShaderSrc = R"(
-        #extension GL_OES_EGL_image_external : require
-        precision mediump float;
-
-        varying vec2 varUvs;
-        uniform samplerExternalOES texSampler;
-        uniform vec4 color;
-        uniform vec2 size;
-
-        void main()
-        {
-            if (gl_FragCoord.x/size.x < 0.5) {
-                gl_FragColor = texture2D(texSampler, varUvs) * color;
-            }
-            else {
-                const float threshold = 1.1;
-                vec4 c = texture2D(texSampler, varUvs);
-                if (length(c) > threshold) {
-                    gl_FragColor = vec4(0.0, 0.0, 1.0, 1.0);
-                } else {
-                    gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
-                }
-            }
-        }
-)";
-
-
-/**
- * Device listeners
- */
-
-static void onDisconnected(void* context, ACameraDevice* device)
-{
-    LOGD("onDisconnected");
-}
-
-static void onError(void* context, ACameraDevice* device, int error)
-{
-    LOGD("error %d", error);
-}
-
-static ACameraDevice_stateCallbacks cameraDeviceCallbacks = {
-        .context = nullptr,
-        .onDisconnected = onDisconnected,
-        .onError = onError,
-};
-
-
-/**
- * Session state callbacks
- */
-
-static void onSessionActive(void* context, ACameraCaptureSession *session)
-{
-    LOGD("onSessionActive()");
-}
-
-static void onSessionReady(void* context, ACameraCaptureSession *session)
-{
-    LOGD("onSessionReady()");
-}
-
-static void onSessionClosed(void* context, ACameraCaptureSession *session)
-{
-    LOGD("onSessionClosed()");
-}
-
-static ACameraCaptureSession_stateCallbacks sessionStateCallbacks {
-        .context = nullptr,
-        .onActive = onSessionActive,
-        .onReady = onSessionReady,
-        .onClosed = onSessionClosed
-};
-
-
-/**
- * Image reader setup. If you want to use AImageReader, enable this in CMakeLists.txt.
- */
-
-#ifdef WITH_IMAGE_READER
-static void imageCallback(void* context, AImageReader* reader)
-{
-    AImage *image = nullptr;
-    auto status = AImageReader_acquireNextImage(reader, &image);
-    LOGD("imageCallback()");
-    // Check status here ...
-
-    // Try to process data without blocking the callback
-    std::thread processor([=](){
-
-        uint8_t *data = nullptr;
-        int len = 0;
-        AImage_getPlaneData(image, 0, &data, &len);
-
-        // Process data here
-        // ...
-
-        AImage_delete(image);
-    });
-    processor.detach();
-}
-
-AImageReader* createJpegReader()
+AImageReader* createRAWReader()
 {
     AImageReader* reader = nullptr;
-    media_status_t status = AImageReader_new(640, 480, AIMAGE_FORMAT_JPEG,
-                     4, &reader);
+    if(AImageReader_new(rawWidth, rawHeight, desiredFormat, 1, &reader) != AMEDIA_OK)
+    {
+        LOGD("Failed to create image reader");
+        return nullptr;
+    }
 
-    //if (status != AMEDIA_OK)
-        // Handle errors here
+    static const auto imageCallback=[](void*, AImageReader* reader)
+        {
+            static std::future<bool> processorFinish;
+            using namespace std::chrono_literals;
+            if(processorFinish.valid() && processorFinish.wait_for(0ms) != std::future_status::ready)
+            {
+                LOGD("Skipping an image due to still running processor of previous frame");
+                return;
+            }
 
-    AImageReader_ImageListener listener{
-            .context = nullptr,
-            .onImageAvailable = imageCallback,
-    };
+            AImage *image = nullptr;
+            const auto status = AImageReader_acquireNextImage(reader, &image);
+            LOGD("imageCallback()");
+            if (status != AMEDIA_OK)
+            {
+                const auto it = mediaStatusNames.find(status);
+                const auto name = it==mediaStatusNames.end() ? std::to_string(status) : it->second;
+                LOGD("*********** AImageReader_acquireNextImage failed with code %s *********", name.c_str());
+                return;
+            }
 
+            processorFinish=std::async(std::launch::async, [image]{
+                    uint8_t *data = nullptr;
+                    int len = 0;
+                    AImage_getPlaneData(image, 0, &data, &len);
+
+                    LOGD("Plane data len: %d", len);
+                    static int counter;
+                    ++counter;
+                    const auto filename="/data/data/eu.sisik.cam/test"+std::to_string(counter%5)+".raw";
+                    std::ofstream file(filename);
+                    bool success=false;
+                    if(file)
+                    {
+                        file.write(reinterpret_cast<const char*>(&rawWidth), sizeof rawWidth);
+                        file.write(reinterpret_cast<const char*>(&rawHeight), sizeof rawHeight);
+                        file.write(reinterpret_cast<const char*>(data), len);
+                        if(!file.flush())
+                        {
+                            LOGD("Failed to write \"%s\"", filename.c_str());
+                        }
+                        else
+                        {
+                            LOGD("File \"%s\" successfully written", filename.c_str());
+                            success=true;
+                        }
+                    }
+                    else
+                    {
+                        LOGD("Failed to open \"%s\"", filename.c_str());
+                    }
+
+                    AImage_delete(image);
+                    return success;
+                });
+        };
+    AImageReader_ImageListener listener{ .onImageAvailable = imageCallback };
     AImageReader_setImageListener(reader, &listener);
 
     return reader;
 }
 
-ANativeWindow* createSurface(AImageReader* reader)
-{
-    ANativeWindow *nativeWindow;
-    AImageReader_getWindow(reader, &nativeWindow);
-
-    return nativeWindow;
-}
-#endif
-
-
-/**
- * Capture callbacks
- */
-
-void onCaptureFailed(void* context, ACameraCaptureSession* session,
-                     ACaptureRequest* request, ACameraCaptureFailure* failure)
-{
-    LOGE("onCaptureFailed ");
-}
-
-void onCaptureSequenceCompleted(void* context, ACameraCaptureSession* session,
-                                int sequenceId, int64_t frameNumber)
-{}
-
-void onCaptureSequenceAborted(void* context, ACameraCaptureSession* session,
-                              int sequenceId)
-{}
-
-void onCaptureCompleted (
-        void* context, ACameraCaptureSession* session,
-        ACaptureRequest* request, const ACameraMetadata* result)
-{
-    LOGD("Capture completed");
-}
-
-static ACameraCaptureSession_captureCallbacks captureCallbacks {
-        .context = nullptr,
-        .onCaptureStarted = nullptr,
-        .onCaptureProgressed = nullptr,
-        .onCaptureCompleted = onCaptureCompleted,
-        .onCaptureFailed = onCaptureFailed,
-        .onCaptureSequenceCompleted = onCaptureSequenceCompleted,
-        .onCaptureSequenceAborted = onCaptureSequenceAborted,
-        .onCaptureBufferLost = nullptr,
-};
-
-
-/**
- * Functions used to set-up the camera and draw
- * camera frames into SurfaceTexture
- */
-
 static void initCam()
 {
     cameraManager = ACameraManager_create();
 
-    auto id = getBackFacingCamId(cameraManager);
+    const auto id = getBackFacingCamId(cameraManager);
+    ACameraDevice_stateCallbacks cameraDeviceCallbacks = {.onError=[](void*, ACameraDevice*, int error)
+                                                                   { LOGD("error %d", error); }};
     ACameraManager_openCamera(cameraManager, id.c_str(), &cameraDeviceCallbacks, &cameraDevice);
 
-    printCamProps(cameraManager, id.c_str());
-}
-
-static void exitCam()
-{
-    if (cameraManager)
+    getCamProps(cameraManager, id.c_str(), desiredFormat, rawWidth, rawHeight);
+    if(!rawWidth || !rawHeight)
     {
-        // Stop recording to SurfaceTexture and do some cleanup
-        ACameraCaptureSession_stopRepeating(textureSession);
-        ACameraCaptureSession_close(textureSession);
-        ACaptureSessionOutputContainer_free(outputs);
-        ACaptureSessionOutput_free(output);
-
-        ACameraDevice_close(cameraDevice);
-        ACameraManager_delete(cameraManager);
-        cameraManager = nullptr;
-
-#ifdef WITH_IMAGE_READER
-        AImageReader_delete(imageReader);
-        imageReader = nullptr;
-#endif
-
-        // Capture request for SurfaceTexture
-        ANativeWindow_release(textureWindow);
-        ACaptureRequest_free(request);
+        LOGD("RAW16 doesn't appear to be supported, giving up");
+        return;
     }
-}
 
-static void initCam(JNIEnv* env, jobject surface)
-{
-    // Prepare surface
-    textureWindow = ANativeWindow_fromSurface(env, surface);
-
-    // Prepare request for texture target
     ACameraDevice_createCaptureRequest(cameraDevice, TEMPLATE_PREVIEW, &request);
-
-    // Prepare outputs for session
-    ACaptureSessionOutput_create(textureWindow, &textureOutput);
     ACaptureSessionOutputContainer_create(&outputs);
-    ACaptureSessionOutputContainer_add(outputs, textureOutput);
 
-// Enable ImageReader example in CMakeLists.txt. This will additionally
-// make image data available in imageCallback().
-#ifdef WITH_IMAGE_READER
-    imageReader = createJpegReader();
-    imageWindow = createSurface(imageReader);
+    imageReader = createRAWReader();
+    AImageReader_getWindow(imageReader, &imageWindow);
     ANativeWindow_acquire(imageWindow);
     ACameraOutputTarget_create(imageWindow, &imageTarget);
     ACaptureRequest_addTarget(request, imageTarget);
     ACaptureSessionOutput_create(imageWindow, &imageOutput);
     ACaptureSessionOutputContainer_add(outputs, imageOutput);
-#endif
 
-    // Prepare target surface
-    ANativeWindow_acquire(textureWindow);
-    ACameraOutputTarget_create(textureWindow, &textureTarget);
-    ACaptureRequest_addTarget(request, textureTarget);
+    ACameraCaptureSession* captureSession = nullptr;
+    static const ACameraCaptureSession_stateCallbacks sessionStateCallbacks{};
+    ACameraDevice_createCaptureSession(cameraDevice, outputs, &sessionStateCallbacks, &captureSession);
 
-    // Create the session
-    ACameraDevice_createCaptureSession(cameraDevice, outputs, &sessionStateCallbacks, &textureSession);
-
-    // Start capturing continuously
-    ACameraCaptureSession_setRepeatingRequest(textureSession, &captureCallbacks, 1, &request, nullptr);
-}
-
-static void initSurface(JNIEnv* env, jint texId, jobject surface)
-{
-    // Init shaders
-    vtxShader = createShader(vertexShaderSrc, GL_VERTEX_SHADER);
-    fragShader = createShader(fragmentShaderSrc, GL_FRAGMENT_SHADER);
-    prog = createProgram(vtxShader, fragShader);
-
-    // Store attribute and uniform locations
-    vtxPosAttrib = glGetAttribLocation(prog, "vertexPosition");
-    uvsAttrib = glGetAttribLocation(prog, "uvs");
-    mvpMatrix = glGetUniformLocation(prog, "mvp");
-    texMatrix = glGetUniformLocation(prog, "texMatrix");
-    texSampler = glGetUniformLocation(prog, "texSampler");
-    color = glGetUniformLocation(prog, "color");
-    size = glGetUniformLocation(prog, "size");
-
-    // Prepare buffers
-    glGenBuffers(2, buf);
-
-    // Set up vertices
-    float vertices[] {
-            // x, y, z, u, v
-            -1, -1, 0, 0, 0,
-            -1, 1, 0, 0, 1,
-            1, 1, 0, 1, 1,
-            1, -1, 0, 1, 0
+    static ACameraCaptureSession_captureCallbacks captureCallbacks
+    {
+        .onCaptureCompleted = [](void*, ACameraCaptureSession*, ACaptureRequest*, const ACameraMetadata*)
+                              { LOGD("Capture completed"); },
+        .onCaptureFailed = [](void*, ACameraCaptureSession*, ACaptureRequest*, ACameraCaptureFailure*)
+                           { LOGE("***************** Capture failed! **********************"); },
     };
-    glBindBuffer(GL_ARRAY_BUFFER, buf[0]);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
-
-    // Set up indices
-    GLuint indices[] { 2, 1, 0, 0, 3, 2 };
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buf[1]);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_DYNAMIC_DRAW);
-
-    // We can use the id to bind to GL_TEXTURE_EXTERNAL_OES
-    textureId = texId;
-
-    // Prepare the surfaces/targets & initialize session
-    initCam(env, surface);
+    ACameraCaptureSession_setRepeatingRequest(captureSession, &captureCallbacks, 1, &request, nullptr);
 }
 
-static void drawFrame(JNIEnv* env, jfloatArray texMatArray)
+static void exitCam()
 {
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-    glClearColor(0, 0, 0, 1);
+    if(!cameraManager) return;
 
-    glUseProgram(prog);
+    ACaptureSessionOutputContainer_free(outputs);
+    ACaptureSessionOutput_free(output);
 
-    // Configure main transformations
-    float mvp[] = {
-            1.0f, 0, 0, 0,
-            0, 1.0f, 0, 0,
-            0, 0, 1.0f, 0,
-            0, 0, 0, 1.0f
-    };
+    ACameraDevice_close(cameraDevice);
+    ACameraManager_delete(cameraManager);
+    cameraManager = nullptr;
 
-    float aspect = width > height ? float(width)/float(height) : float(height)/float(width);
-    if (width < height) // portrait
-        ortho(mvp, -1.0f, 1.0f, -aspect, aspect, -1.0f, 1.0f);
-    else // landscape
-        ortho(mvp, -aspect, aspect, -1.0f, 1.0f, -1.0f, 1.0f);
+    AImageReader_delete(imageReader);
+    imageReader = nullptr;
 
-    glUniformMatrix4fv(mvpMatrix, 1, false, mvp);
-
-
-    // Prepare texture for drawing
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_EXTERNAL_OES, textureId);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    // Pass SurfaceTexture transformations to shader
-    float* tm = env->GetFloatArrayElements(texMatArray, 0);
-    glUniformMatrix4fv(texMatrix, 1, false, tm);
-    env->ReleaseFloatArrayElements(texMatArray, tm, 0);
-
-    // Set the SurfaceTexture sampler
-    glUniform1i(texSampler, 0);
-
-    // I use red color to mix with camera frames
-    float c[] = { 1, 0, 0, 1 };
-    glUniform4fv(color, 1, (GLfloat*)c);
-
-    // Size of the window is used in fragment shader
-    // to split the window
-    float sz[2] = {0};
-    sz[0] = width;
-    sz[1] = height;
-    glUniform2fv(size, 1, (GLfloat*)sz);
-
-    // Set up vertices/indices and draw
-    glBindBuffer(GL_ARRAY_BUFFER, buf[0]);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buf[1]);
-
-    glEnableVertexAttribArray(vtxPosAttrib);
-    glVertexAttribPointer(vtxPosAttrib, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 5, (void*)0);
-
-    glEnableVertexAttribArray(uvsAttrib);
-    glVertexAttribPointer(uvsAttrib, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 5, (void *)(3 * sizeof(float)));
-
-    glViewport(0, 0, width, height);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    ACaptureRequest_free(request);
 }
-
 
 /**
  * JNI stuff
@@ -461,25 +207,5 @@ JNIEXPORT void JNICALL
 Java_eu_sisik_cam_MainActivity_exitCam(JNIEnv *env, jobject)
 {
     exitCam();
-}
-
-JNIEXPORT void JNICALL
-Java_eu_sisik_cam_CamRenderer_onSurfaceCreated(JNIEnv *env, jobject, jint texId, jobject surface)
-{
-    LOGD("onSurfaceCreated()");
-    initSurface(env, texId, surface);
-}
-
-JNIEXPORT void JNICALL
-Java_eu_sisik_cam_CamRenderer_onSurfaceChanged(JNIEnv *env, jobject, jint w, jint h)
-{
-    width = w;
-    height = h;
-}
-
-JNIEXPORT void JNICALL
-Java_eu_sisik_cam_CamRenderer_onDrawFrame(JNIEnv *env, jobject, jfloatArray texMatArray)
-{
-    drawFrame(env, texMatArray);
 }
 } // Extern C

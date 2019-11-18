@@ -4,13 +4,11 @@
 #define NATIVE_CAMERA_CAM_UTILS_H
 
 #include <camera/NdkCameraManager.h>
+#include <media/NdkImage.h>
 #include <string>
 
-namespace sixo {
-
-void printCamProps(ACameraManager *cameraManager, const char *id);
+void getCamProps(ACameraManager *cameraManager, const char *id, AIMAGE_FORMATS formatToFind, unsigned& rawWidth, unsigned& rawHeight);
 
 std::string getBackFacingCamId(ACameraManager *cameraManager);
 
-}
-#endif //NATIVE_CAMERA_CAM_UTILS_H
+#endif

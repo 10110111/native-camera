@@ -6,9 +6,6 @@ file( GLOB app_src_files
 
 add_library( native-lib SHARED ${app_src_files} )
 
-# Enable this if you want to use AImageReader
-#target_compile_definitions( native-lib PRIVATE WITH_IMAGE_READER=1 )
-
 find_library( log-lib log )
 find_library( camera-lib camera2ndk )
 find_library( media-lib mediandk )

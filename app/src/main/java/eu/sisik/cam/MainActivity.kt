@@ -35,13 +35,11 @@ class MainActivity : Activity() {
             requestPermissions(arrayOf(camPermission), CAM_PERMISSION_CODE)
         } else {
             initCam()
-            camSurfaceView.onResume()
         }
     }
 
     override fun onPause() {
         super.onPause()
-        camSurfaceView.onPause()
         exitCam()
     }
 
