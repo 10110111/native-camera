@@ -70,8 +70,14 @@ const std::map<media_status_t, const char*> mediaStatusNames={
     {AMEDIA_IMGREADER_IMAGE_NOT_LOCKED      , "IMGREADER_IMAGE_NOT_LOCKED"},
 };
 
-void getCamProps(ACameraManager *cameraManager, const char *id, const AIMAGE_FORMATS formatToFind,
-                 unsigned& bestWidth, unsigned& bestHeight)
+const auto desiredRawFormat=AIMAGE_FORMAT_RAW16;
+unsigned imageWidthRaw, imageHeightRaw;
+const auto desiredCookedFormat=AIMAGE_FORMAT_JPEG;
+unsigned imageWidthCooked, imageHeightCooked;
+
+void getCamProps(ACameraManager *cameraManager, const char *id,
+                 const AIMAGE_FORMATS formatToFindA, unsigned& bestWidthA, unsigned& bestHeightA,
+                 const AIMAGE_FORMATS formatToFindB, unsigned& bestWidthB, unsigned& bestHeightB)
 {
     ACameraMetadata *metadataObj;
     ACameraManager_getCameraCharacteristics(cameraManager, id, &metadataObj);
@@ -93,7 +99,7 @@ void getCamProps(ACameraManager *cameraManager, const char *id, const AIMAGE_FOR
 
     ACameraMetadata_getConstEntry(metadataObj, ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS, &entry);
 
-    bestWidth=bestHeight=0;
+    bestWidthA=bestHeightA=bestWidthB=bestHeightB=0;
     for (int i = 0; i < entry.count; i += 4)
     {
         // We are only interested in output streams, so skip input stream
@@ -107,10 +113,15 @@ void getCamProps(ACameraManager *cameraManager, const char *id, const AIMAGE_FOR
         const auto it=formatNames.find(format);
         const auto formatName = it==formatNames.end() ? std::to_string(format) : it->second;
         LOGD("camProps: format: %s, maxWidth=%d, maxHeight=%d", formatName.c_str(), width, height);
-        if(format==formatToFind && uint64_t(width)*height > uint64_t(bestWidth)*bestHeight)
+        if(format==formatToFindA && uint64_t(width)*height > uint64_t(bestWidthA)*bestHeightA)
         {
-            bestWidth=width;
-            bestHeight=height;
+            bestWidthA=width;
+            bestHeightA=height;
+        }
+        else if(format==formatToFindB && uint64_t(width)*height > uint64_t(bestWidthB)*bestHeightB)
+        {
+            bestWidthB=width;
+            bestHeightB=height;
         }
     }
 
@@ -160,15 +171,15 @@ std::string getBackFacingCamId(ACameraManager *cameraManager)
 static ACameraManager* cameraManager = nullptr;
 static ACameraDevice* cameraDevice = nullptr;
 static ACaptureRequest* request = nullptr;
-static ANativeWindow* imageWindow = nullptr;
-static ACameraOutputTarget* imageTarget = nullptr;
-static AImageReader* imageReader = nullptr;
-static ACaptureSessionOutput* imageOutput = nullptr;
-static ACaptureSessionOutput* output = nullptr;
+static ANativeWindow* rawImageWindow = nullptr;
+static ANativeWindow* jpegImageWindow = nullptr;
+static ACameraOutputTarget* rawImageTarget = nullptr;
+static ACameraOutputTarget* jpegImageTarget = nullptr;
+static AImageReader* rawImageReader = nullptr;
+static AImageReader* jpegImageReader = nullptr;
+static ACaptureSessionOutput* rawImageOutput = nullptr;
+static ACaptureSessionOutput* jpegImageOutput = nullptr;
 static ACaptureSessionOutputContainer* outputs = nullptr;
-
-static unsigned imageWidth, imageHeight;
-static const auto desiredFormat=AIMAGE_FORMAT_RAW16;
 
 std::string getFormattedTimeNow()
 {
@@ -180,22 +191,24 @@ std::string getFormattedTimeNow()
     return str.str();
 }
 
-AImageReader* createRAWReader()
+AImageReader* createImageReader(const AIMAGE_FORMATS desiredFormat, const unsigned width, const unsigned height)
 {
     AImageReader* reader = nullptr;
-    if(AImageReader_new(imageWidth, imageHeight, desiredFormat, 1, &reader) != AMEDIA_OK)
+    if(AImageReader_new(width, height, desiredFormat, 1, &reader) != AMEDIA_OK)
     {
         LOGD("Failed to create image reader");
         return nullptr;
     }
     else
-        LOGD("Created image reader with dimensions %d×%d", imageWidth, imageHeight);
+        LOGD("Created image reader with dimensions %d×%d", width, height);
 
-    static const auto imageCallback=[](void*, AImageReader* reader)
+    static std::map<AIMAGE_FORMATS, std::future<bool>> futures;
+    static const auto imageCallback=[](void* context, AImageReader* reader)
         {
-            static std::future<bool> processorFinish;
+            const auto format=static_cast<AIMAGE_FORMATS>(reinterpret_cast<uintptr_t>(context));
             using namespace std::chrono_literals;
-            if(processorFinish.valid() && processorFinish.wait_for(0ms) != std::future_status::ready)
+            auto& future=futures[format];
+            if(future.valid() && future.wait_for(0ms) != std::future_status::ready)
             {
                 LOGD("Skipping an image due to still running processor of previous frame");
                 return;
@@ -212,24 +225,27 @@ AImageReader* createRAWReader()
                 return;
             }
 
-            processorFinish=std::async(std::launch::async, [image]{
+            const bool isRaw = format==AIMAGE_FORMAT_RAW16 ||
+                               format==AIMAGE_FORMAT_RAW12 ||
+                               format==AIMAGE_FORMAT_RAW10;
+            const auto filename="/data/data/eu.sisik.cam/IMG_"+getFormattedTimeNow()+(isRaw?".raw":".jpg");
+            future=std::async(std::launch::async, [image,format,filename,isRaw]{
                     uint8_t *data = nullptr;
                     int len = 0;
                     AImage_getPlaneData(image, 0, &data, &len);
+                    int32_t width, height;
+                    AImage_getWidth(image, &width);
+                    AImage_getHeight(image, &height);
 
                     LOGD("Plane data len: %d", len);
-                    const bool isRaw = desiredFormat==AIMAGE_FORMAT_RAW16 ||
-                                       desiredFormat==AIMAGE_FORMAT_RAW12 ||
-                                       desiredFormat==AIMAGE_FORMAT_RAW10;
-                    const auto filename="/data/data/eu.sisik.cam/IMG_"+getFormattedTimeNow()+(isRaw?".raw":".jpg");
                     std::ofstream file(filename);
                     bool success=false;
                     if(file)
                     {
                         if(isRaw)
                         {
-                            file.write(reinterpret_cast<const char*>(&imageWidth), sizeof imageWidth);
-                            file.write(reinterpret_cast<const char*>(&imageHeight), sizeof imageHeight);
+                            file.write(reinterpret_cast<const char*>(&width ), sizeof width);
+                            file.write(reinterpret_cast<const char*>(&height), sizeof height);
                         }
                         file.write(reinterpret_cast<const char*>(data), len);
                         if(!file.flush())
@@ -251,7 +267,8 @@ AImageReader* createRAWReader()
                     return success;
                 });
         };
-    AImageReader_ImageListener listener{ .onImageAvailable = imageCallback };
+    AImageReader_ImageListener listener{ .context=reinterpret_cast<void*>(desiredFormat), 
+                                         .onImageAvailable = imageCallback };
     AImageReader_setImageListener(reader, &listener);
 
     return reader;
@@ -266,23 +283,37 @@ static void initCam()
                                                                    { LOGD("error %d", error); }};
     ACameraManager_openCamera(cameraManager, id.c_str(), &cameraDeviceCallbacks, &cameraDevice);
 
-    getCamProps(cameraManager, id.c_str(), desiredFormat, imageWidth, imageHeight);
-    if(!imageWidth || !imageHeight)
+    getCamProps(cameraManager, id.c_str(), desiredRawFormat, imageWidthRaw, imageHeightRaw,
+                                           desiredCookedFormat, imageWidthCooked, imageHeightCooked);
+    if(!imageWidthRaw || !imageHeightRaw)
     {
-        LOGD("RAW16 doesn't appear to be supported, giving up");
+        LOGD("Desired raw format doesn't appear to be supported, giving up");
+        return;
+    }
+    if(!imageWidthRaw || !imageHeightRaw)
+    {
+        LOGD("Desired cooked format doesn't appear to be supported, giving up");
         return;
     }
 
     ACameraDevice_createCaptureRequest(cameraDevice, TEMPLATE_PREVIEW, &request);
     ACaptureSessionOutputContainer_create(&outputs);
 
-    imageReader = createRAWReader();
-    AImageReader_getWindow(imageReader, &imageWindow);
-    ANativeWindow_acquire(imageWindow);
-    ACameraOutputTarget_create(imageWindow, &imageTarget);
-    ACaptureRequest_addTarget(request, imageTarget);
-    ACaptureSessionOutput_create(imageWindow, &imageOutput);
-    ACaptureSessionOutputContainer_add(outputs, imageOutput);
+    rawImageReader = createImageReader(desiredRawFormat, imageWidthRaw, imageHeightRaw);
+    AImageReader_getWindow(rawImageReader, &rawImageWindow);
+    ANativeWindow_acquire(rawImageWindow);
+    ACameraOutputTarget_create(rawImageWindow, &rawImageTarget);
+    ACaptureRequest_addTarget(request, rawImageTarget);
+    ACaptureSessionOutput_create(rawImageWindow, &rawImageOutput);
+    ACaptureSessionOutputContainer_add(outputs, rawImageOutput);
+
+    jpegImageReader = createImageReader(desiredCookedFormat, imageWidthCooked, imageHeightCooked);
+    AImageReader_getWindow(jpegImageReader, &jpegImageWindow);
+    ANativeWindow_acquire(jpegImageWindow);
+    ACameraOutputTarget_create(jpegImageWindow, &jpegImageTarget);
+    ACaptureRequest_addTarget(request, jpegImageTarget);
+    ACaptureSessionOutput_create(jpegImageWindow, &jpegImageOutput);
+    ACaptureSessionOutputContainer_add(outputs, jpegImageOutput);
 
     ACameraCaptureSession* captureSession = nullptr;
     static const ACameraCaptureSession_stateCallbacks sessionStateCallbacks{};
@@ -317,14 +348,17 @@ static void exitCam()
     if(!cameraManager) return;
 
     ACaptureSessionOutputContainer_free(outputs);
-    ACaptureSessionOutput_free(output);
+    ACaptureSessionOutput_free(rawImageOutput);
+    ACaptureSessionOutput_free(jpegImageOutput);
 
     ACameraDevice_close(cameraDevice);
     ACameraManager_delete(cameraManager);
     cameraManager = nullptr;
 
-    AImageReader_delete(imageReader);
-    imageReader = nullptr;
+    AImageReader_delete(rawImageReader);
+    rawImageReader = nullptr;
+    AImageReader_delete(jpegImageReader);
+    jpegImageReader = nullptr;
 
     ACaptureRequest_free(request);
 }
