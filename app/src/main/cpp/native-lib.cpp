@@ -206,22 +206,24 @@ AImageReader* createImageReader(const AIMAGE_FORMATS desiredFormat, const unsign
     static const auto imageCallback=[](void* context, AImageReader* reader)
         {
             const auto format=static_cast<AIMAGE_FORMATS>(reinterpret_cast<uintptr_t>(context));
+            const auto formatIt=formatNames.find(format);
+            const auto formatName = formatIt==formatNames.end() ? std::to_string(format) : formatIt->second;
+            LOGD("%s: imageCallback()", formatName.c_str());
             using namespace std::chrono_literals;
             auto& future=futures[format];
             if(future.valid() && future.wait_for(0ms) != std::future_status::ready)
             {
-                LOGD("Skipping an image due to still running processor of previous frame");
+                LOGD("%s: Skipping an image due to still running processor of previous frame, returning from imageCallback", formatName.c_str());
                 return;
             }
 
             AImage *image = nullptr;
             const auto status = AImageReader_acquireNextImage(reader, &image);
-            LOGD("imageCallback()");
             if (status != AMEDIA_OK)
             {
                 const auto it = mediaStatusNames.find(status);
                 const auto name = it==mediaStatusNames.end() ? std::to_string(status) : it->second;
-                LOGD("*********** AImageReader_acquireNextImage failed with code %s *********", name.c_str());
+                LOGD("%s: *********** AImageReader_acquireNextImage failed with code %s, returning from imageCallback **************", formatName.c_str(), name.c_str());
                 return;
             }
 
@@ -229,7 +231,10 @@ AImageReader* createImageReader(const AIMAGE_FORMATS desiredFormat, const unsign
                                format==AIMAGE_FORMAT_RAW12 ||
                                format==AIMAGE_FORMAT_RAW10;
             const auto filename="/data/data/eu.sisik.cam/IMG_"+getFormattedTimeNow()+(isRaw?".raw":".jpg");
-            future=std::async(std::launch::async, [image,format,filename,isRaw]{
+            future=std::async(std::launch::async, [image,formatName,filename,isRaw]
+                {
+                    LOGD("%s: starting data saving thread", formatName.c_str());
+
                     uint8_t *data = nullptr;
                     int len = 0;
                     AImage_getPlaneData(image, 0, &data, &len);
@@ -237,7 +242,7 @@ AImageReader* createImageReader(const AIMAGE_FORMATS desiredFormat, const unsign
                     AImage_getWidth(image, &width);
                     AImage_getHeight(image, &height);
 
-                    LOGD("Plane data len: %d", len);
+                    LOGD("%s: Plane data len: %d", formatName.c_str(), len);
                     std::ofstream file(filename);
                     bool success=false;
                     if(file)
@@ -250,22 +255,24 @@ AImageReader* createImageReader(const AIMAGE_FORMATS desiredFormat, const unsign
                         file.write(reinterpret_cast<const char*>(data), len);
                         if(!file.flush())
                         {
-                            LOGD("Failed to write \"%s\"", filename.c_str());
+                            LOGD("%s: Failed to write \"%s\"", formatName.c_str(), filename.c_str());
                         }
                         else
                         {
-                            LOGD("File \"%s\" successfully written", filename.c_str());
+                            LOGD("%s: File \"%s\" successfully written", formatName.c_str(), filename.c_str());
                             success=true;
                         }
                     }
                     else
                     {
-                        LOGD("Failed to open \"%s\"", filename.c_str());
+                        LOGD("%s: Failed to open \"%s\"", formatName.c_str(), filename.c_str());
                     }
 
                     AImage_delete(image);
+                    LOGD("%s: returning from data saving thread", formatName.c_str());
                     return success;
                 });
+            LOGD("%s: returning from imageCallback", formatName.c_str());
         };
     AImageReader_ImageListener listener{ .context=reinterpret_cast<void*>(desiredFormat), 
                                          .onImageAvailable = imageCallback };
