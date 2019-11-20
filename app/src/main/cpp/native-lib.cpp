@@ -277,8 +277,22 @@ static void initCam()
 
     static ACameraCaptureSession_captureCallbacks captureCallbacks
     {
-        .onCaptureCompleted = [](void*, ACameraCaptureSession*, ACaptureRequest*, const ACameraMetadata*)
-                              { LOGD("Capture completed"); },
+        .onCaptureCompleted = [](void*, ACameraCaptureSession*, ACaptureRequest*, const ACameraMetadata* metadata)
+        {
+            LOGD("Capture completed");
+            ACameraMetadata_const_entry entry{};
+            if(const auto res=ACameraMetadata_getConstEntry(metadata, ACAMERA_COLOR_CORRECTION_TRANSFORM, &entry); res==ACAMERA_OK)
+            {
+                LOGD("Color correction matrix:\n%g %g %g\n%g %g %g\n%g %g %g"
+  , double(entry.data.i32[0 ])/entry.data.i32[1 ], double(entry.data.i32[2 ])/entry.data.i32[3 ], double(entry.data.i32[4 ])/entry.data.i32[5 ]
+  , double(entry.data.i32[6 ])/entry.data.i32[7 ], double(entry.data.i32[8 ])/entry.data.i32[9 ], double(entry.data.i32[10])/entry.data.i32[11]
+  , double(entry.data.i32[12])/entry.data.i32[13], double(entry.data.i32[14])/entry.data.i32[15], double(entry.data.i32[16])/entry.data.i32[17]
+                    );
+            }
+            else
+                LOGE("Failed to color correction transform: error %d", int(res));
+
+        },
         .onCaptureFailed = [](void*, ACameraCaptureSession*, ACaptureRequest*, ACameraCaptureFailure*)
                            { LOGE("***************** Capture failed! **********************"); },
     };
