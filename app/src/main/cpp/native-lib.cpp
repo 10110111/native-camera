@@ -4,6 +4,8 @@
 #include <fstream>
 #include <vector>
 #include <future>
+#include <sstream>
+#include <iomanip>
 
 #include <camera/NdkCameraManager.h>
 #include <camera/NdkCameraMetadata.h>
@@ -168,6 +170,16 @@ static ACaptureSessionOutputContainer* outputs = nullptr;
 static unsigned imageWidth, imageHeight;
 static const auto desiredFormat=AIMAGE_FORMAT_RAW16;
 
+std::string getFormattedTimeNow()
+{
+    const auto t=std::time(nullptr);
+    struct tm tm_;
+    const auto tm=localtime_r(&t, &tm_);
+    std::ostringstream str;
+    str << std::put_time(tm, "%Y%m%d_%H%M%S");
+    return str.str();
+}
+
 AImageReader* createRAWReader()
 {
     AImageReader* reader = nullptr;
@@ -206,14 +218,15 @@ AImageReader* createRAWReader()
                     AImage_getPlaneData(image, 0, &data, &len);
 
                     LOGD("Plane data len: %d", len);
-                    static int counter;
-                    ++counter;
-                    const auto filename="/data/data/eu.sisik.cam/test"+std::to_string(counter%5)+".raw";
+                    const bool isRaw = desiredFormat==AIMAGE_FORMAT_RAW16 ||
+                                       desiredFormat==AIMAGE_FORMAT_RAW12 ||
+                                       desiredFormat==AIMAGE_FORMAT_RAW10;
+                    const auto filename="/data/data/eu.sisik.cam/IMG_"+getFormattedTimeNow()+(isRaw?".raw":".jpg");
                     std::ofstream file(filename);
                     bool success=false;
                     if(file)
                     {
-                        if(desiredFormat==AIMAGE_FORMAT_RAW16 || desiredFormat==AIMAGE_FORMAT_RAW12 || desiredFormat==AIMAGE_FORMAT_RAW10)
+                        if(isRaw)
                         {
                             file.write(reinterpret_cast<const char*>(&imageWidth), sizeof imageWidth);
                             file.write(reinterpret_cast<const char*>(&imageHeight), sizeof imageHeight);
