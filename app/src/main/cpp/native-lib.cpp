@@ -71,6 +71,25 @@ const std::map<media_status_t, const char*> mediaStatusNames={
     {AMEDIA_IMGREADER_IMAGE_NOT_LOCKED      , "IMGREADER_IMAGE_NOT_LOCKED"},
 };
 
+const std::map<camera_status_t, const char*> cameraStatusNames={
+    {ACAMERA_OK                          , "OK"},
+    {ACAMERA_ERROR_UNKNOWN               , "ERROR_UNKNOWN"},
+    {ACAMERA_ERROR_INVALID_PARAMETER     , "ERROR_INVALID_PARAMETER"},
+    {ACAMERA_ERROR_CAMERA_DISCONNECTED   , "ERROR_CAMERA_DISCONNECTED"},
+    {ACAMERA_ERROR_NOT_ENOUGH_MEMORY     , "ERROR_NOT_ENOUGH_MEMORY"},
+    {ACAMERA_ERROR_METADATA_NOT_FOUND    , "ERROR_METADATA_NOT_FOUND"},
+    {ACAMERA_ERROR_CAMERA_DEVICE         , "ERROR_CAMERA_DEVICE"},
+    {ACAMERA_ERROR_CAMERA_SERVICE        , "ERROR_CAMERA_SERVICE"},
+    {ACAMERA_ERROR_SESSION_CLOSED        , "ERROR_SESSION_CLOSED"},
+    {ACAMERA_ERROR_INVALID_OPERATION     , "ERROR_INVALID_OPERATION"},
+    {ACAMERA_ERROR_STREAM_CONFIGURE_FAIL , "ERROR_STREAM_CONFIGURE_FAIL"},
+    {ACAMERA_ERROR_CAMERA_IN_USE         , "ERROR_CAMERA_IN_USE"},
+    {ACAMERA_ERROR_MAX_CAMERA_IN_USE     , "ERROR_MAX_CAMERA_IN_USE"},
+    {ACAMERA_ERROR_CAMERA_DISABLED       , "ERROR_CAMERA_DISABLED"},
+    {ACAMERA_ERROR_PERMISSION_DENIED     , "ERROR_PERMISSION_DENIED"},
+    {ACAMERA_ERROR_UNSUPPORTED_OPERATION , "ERROR_UNSUPPORTED_OPERATION"},
+};
+
 template<typename T, typename ErrorType>
 std::string errorName(T const& names, ErrorType error)
 {
@@ -85,11 +104,15 @@ std::string errorName(T const& names, ErrorType error)
         LOGE("Call %s failed. Error code %s", #call, errorName(mediaStatusNames,status).c_str()); \
         HANDLER_STATEMENT; \
     }
+#define CHECK_CAM_CALL(call, HANDLER_STATEMENT) \
+    if(const camera_status_t status=call; status!=ACAMERA_OK) \
+    { \
+        LOGE("Call %s failed. Error code %s", #call, errorName(cameraStatusNames,status).c_str()); \
+        HANDLER_STATEMENT; \
+    }
 
 const auto desiredRawFormat=AIMAGE_FORMAT_RAW16;
-unsigned imageWidthRaw, imageHeightRaw;
 const auto desiredCookedFormat=AIMAGE_FORMAT_JPEG;
-unsigned imageWidthCooked, imageHeightCooked;
 
 void getCamProps(ACameraManager *cameraManager, const char *id,
                  const AIMAGE_FORMATS formatToFindA, unsigned& bestWidthA, unsigned& bestHeightA,
@@ -186,7 +209,7 @@ std::string getBackFacingCamId(ACameraManager *cameraManager)
 }
 static ACameraManager* cameraManager = nullptr;
 static ACameraDevice* cameraDevice = nullptr;
-static ACaptureRequest* request = nullptr;
+static ACaptureRequest* captureRequest = nullptr;
 static ANativeWindow* rawImageWindow = nullptr;
 static ANativeWindow* jpegImageWindow = nullptr;
 static ACameraOutputTarget* rawImageTarget = nullptr;
@@ -196,6 +219,7 @@ static AImageReader* jpegImageReader = nullptr;
 static ACaptureSessionOutput* rawImageOutput = nullptr;
 static ACaptureSessionOutput* jpegImageOutput = nullptr;
 static ACaptureSessionOutputContainer* outputs = nullptr;
+static ACameraCaptureSession* captureSession = nullptr;
 
 std::string getFormattedTimeNow()
 {
@@ -214,6 +238,31 @@ std::string getFormattedTimeNow()
     str << std::setw(3) << std::setfill('0') << std::lrint(ms);
     return str.str();
 }
+
+static int numberOfTimesCaptured=0;
+static ACameraCaptureSession_captureCallbacks captureCallbacks
+{
+    .onCaptureCompleted = [](void*, ACameraCaptureSession*, ACaptureRequest*, const ACameraMetadata* metadata)
+    {
+        LOGD("Capture completed");
+        ACameraMetadata_const_entry entry{};
+        if(const auto res=ACameraMetadata_getConstEntry(metadata, ACAMERA_COLOR_CORRECTION_TRANSFORM, &entry); res==ACAMERA_OK)
+        {
+            LOGD("Color correction matrix:\n%g %g %g\n%g %g %g\n%g %g %g"
+, double(entry.data.i32[0 ])/entry.data.i32[1 ], double(entry.data.i32[2 ])/entry.data.i32[3 ], double(entry.data.i32[4 ])/entry.data.i32[5 ]
+, double(entry.data.i32[6 ])/entry.data.i32[7 ], double(entry.data.i32[8 ])/entry.data.i32[9 ], double(entry.data.i32[10])/entry.data.i32[11]
+, double(entry.data.i32[12])/entry.data.i32[13], double(entry.data.i32[14])/entry.data.i32[15], double(entry.data.i32[16])/entry.data.i32[17]
+                );
+        }
+        else
+            LOGE("Failed to color correction transform: error %d", int(res));
+
+        if(numberOfTimesCaptured++) return;
+        CHECK_CAM_CALL(ACameraCaptureSession_capture(captureSession, &captureCallbacks, 1, &captureRequest, nullptr),);
+    },
+    .onCaptureFailed = [](void*, ACameraCaptureSession*, ACaptureRequest*, ACameraCaptureFailure*)
+                       { LOGE("***************** Capture failed! **********************"); },
+};
 
 AImageReader* createImageReader(const AIMAGE_FORMATS desiredFormat, const unsigned width, const unsigned height)
 {
@@ -242,7 +291,14 @@ AImageReader* createImageReader(const AIMAGE_FORMATS desiredFormat, const unsign
             }
 
             AImage *image = nullptr;
-            CHECK_MEDIA_CALL(AImageReader_acquireNextImage(reader, &image), return);
+            const auto status = AImageReader_acquireNextImage(reader, &image);
+            if (status != AMEDIA_OK)
+            {
+                const auto it = mediaStatusNames.find(status);
+                const auto name = it==mediaStatusNames.end() ? std::to_string(status) : it->second;
+                LOGD("%s: *********** AImageReader_acquireNextImage failed with code %s, returning from imageCallback **************", formatName.c_str(), name.c_str());
+                return;
+            }
 
             const bool isRaw = format==AIMAGE_FORMAT_RAW16 ||
                                format==AIMAGE_FORMAT_RAW12 ||
@@ -307,6 +363,8 @@ static void initCam()
                                                                    { LOGD("error %d", error); }};
     ACameraManager_openCamera(cameraManager, id.c_str(), &cameraDeviceCallbacks, &cameraDevice);
 
+    unsigned imageWidthCooked, imageHeightCooked;
+    unsigned imageWidthRaw, imageHeightRaw;
     getCamProps(cameraManager, id.c_str(), desiredRawFormat, imageWidthRaw, imageHeightRaw,
                                            desiredCookedFormat, imageWidthCooked, imageHeightCooked);
     if(!imageWidthRaw || !imageHeightRaw)
@@ -320,55 +378,35 @@ static void initCam()
         return;
     }
 
-    ACameraDevice_createCaptureRequest(cameraDevice, TEMPLATE_PREVIEW, &request);
+    ACameraDevice_createCaptureRequest(cameraDevice, TEMPLATE_STILL_CAPTURE, &captureRequest);
+
     ACaptureSessionOutputContainer_create(&outputs);
 
     rawImageReader = createImageReader(desiredRawFormat, imageWidthRaw, imageHeightRaw);
     AImageReader_getWindow(rawImageReader, &rawImageWindow);
     ANativeWindow_acquire(rawImageWindow);
-    ACameraOutputTarget_create(rawImageWindow, &rawImageTarget);
-    ACaptureRequest_addTarget(request, rawImageTarget);
-    ACaptureSessionOutput_create(rawImageWindow, &rawImageOutput);
-    ACaptureSessionOutputContainer_add(outputs, rawImageOutput);
+    CHECK_CAM_CALL(ACameraOutputTarget_create(rawImageWindow, &rawImageTarget),);
+    CHECK_CAM_CALL(ACaptureRequest_addTarget(captureRequest, rawImageTarget),);
+    CHECK_CAM_CALL(ACaptureSessionOutput_create(rawImageWindow, &rawImageOutput),);
+    CHECK_CAM_CALL(ACaptureSessionOutputContainer_add(outputs, rawImageOutput),);
 
     jpegImageReader = createImageReader(desiredCookedFormat, imageWidthCooked, imageHeightCooked);
     AImageReader_getWindow(jpegImageReader, &jpegImageWindow);
     ANativeWindow_acquire(jpegImageWindow);
-    ACameraOutputTarget_create(jpegImageWindow, &jpegImageTarget);
-    ACaptureRequest_addTarget(request, jpegImageTarget);
-    ACaptureSessionOutput_create(jpegImageWindow, &jpegImageOutput);
-    ACaptureSessionOutputContainer_add(outputs, jpegImageOutput);
+    CHECK_CAM_CALL(ACameraOutputTarget_create(jpegImageWindow, &jpegImageTarget),);
+    CHECK_CAM_CALL(ACaptureRequest_addTarget(captureRequest, jpegImageTarget),);
+    CHECK_CAM_CALL(ACaptureSessionOutput_create(jpegImageWindow, &jpegImageOutput),);
+    CHECK_CAM_CALL(ACaptureSessionOutputContainer_add(outputs, jpegImageOutput),);
 
-    ACameraCaptureSession* captureSession = nullptr;
     static const ACameraCaptureSession_stateCallbacks sessionStateCallbacks{};
-    ACameraDevice_createCaptureSession(cameraDevice, outputs, &sessionStateCallbacks, &captureSession);
+    CHECK_CAM_CALL(ACameraDevice_createCaptureSession(cameraDevice, outputs, &sessionStateCallbacks, &captureSession),);
 
-    static ACameraCaptureSession_captureCallbacks captureCallbacks
-    {
-        .onCaptureCompleted = [](void*, ACameraCaptureSession*, ACaptureRequest*, const ACameraMetadata* metadata)
-        {
-            LOGD("Capture completed");
-            ACameraMetadata_const_entry entry{};
-            if(const auto res=ACameraMetadata_getConstEntry(metadata, ACAMERA_COLOR_CORRECTION_TRANSFORM, &entry); res==ACAMERA_OK)
-            {
-                LOGD("Color correction matrix:\n%g %g %g\n%g %g %g\n%g %g %g"
-  , double(entry.data.i32[0 ])/entry.data.i32[1 ], double(entry.data.i32[2 ])/entry.data.i32[3 ], double(entry.data.i32[4 ])/entry.data.i32[5 ]
-  , double(entry.data.i32[6 ])/entry.data.i32[7 ], double(entry.data.i32[8 ])/entry.data.i32[9 ], double(entry.data.i32[10])/entry.data.i32[11]
-  , double(entry.data.i32[12])/entry.data.i32[13], double(entry.data.i32[14])/entry.data.i32[15], double(entry.data.i32[16])/entry.data.i32[17]
-                    );
-            }
-            else
-                LOGE("Failed to color correction transform: error %d", int(res));
-
-        },
-        .onCaptureFailed = [](void*, ACameraCaptureSession*, ACaptureRequest*, ACameraCaptureFailure*)
-                           { LOGE("***************** Capture failed! **********************"); },
-    };
-    ACameraCaptureSession_setRepeatingRequest(captureSession, &captureCallbacks, 1, &request, nullptr);
+    CHECK_CAM_CALL(ACameraCaptureSession_capture(captureSession, &captureCallbacks, 1, &captureRequest, nullptr),);
 }
 
 static void exitCam()
 {
+    numberOfTimesCaptured = 0;
     if(!cameraManager) return;
 
     ACaptureSessionOutputContainer_free(outputs);
@@ -384,7 +422,7 @@ static void exitCam()
     AImageReader_delete(jpegImageReader);
     jpegImageReader = nullptr;
 
-    ACaptureRequest_free(request);
+    ACaptureRequest_free(captureRequest);
 }
 
 /**
