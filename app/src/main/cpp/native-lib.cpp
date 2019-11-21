@@ -71,6 +71,21 @@ const std::map<media_status_t, const char*> mediaStatusNames={
     {AMEDIA_IMGREADER_IMAGE_NOT_LOCKED      , "IMGREADER_IMAGE_NOT_LOCKED"},
 };
 
+template<typename T, typename ErrorType>
+std::string errorName(T const& names, ErrorType error)
+{
+    const auto it=names.find(error);
+    if(it!=names.end())
+        return it->second;
+    return std::to_string(int(error));
+}
+#define CHECK_MEDIA_CALL(call, HANDLER_STATEMENT) \
+    if(const media_status_t status=call; status!=AMEDIA_OK) \
+    { \
+        LOGE("Call %s failed. Error code %s", #call, errorName(mediaStatusNames,status).c_str()); \
+        HANDLER_STATEMENT; \
+    }
+
 const auto desiredRawFormat=AIMAGE_FORMAT_RAW16;
 unsigned imageWidthRaw, imageHeightRaw;
 const auto desiredCookedFormat=AIMAGE_FORMAT_JPEG;
@@ -227,14 +242,7 @@ AImageReader* createImageReader(const AIMAGE_FORMATS desiredFormat, const unsign
             }
 
             AImage *image = nullptr;
-            const auto status = AImageReader_acquireNextImage(reader, &image);
-            if (status != AMEDIA_OK)
-            {
-                const auto it = mediaStatusNames.find(status);
-                const auto name = it==mediaStatusNames.end() ? std::to_string(status) : it->second;
-                LOGD("%s: *********** AImageReader_acquireNextImage failed with code %s, returning from imageCallback **************", formatName.c_str(), name.c_str());
-                return;
-            }
+            CHECK_MEDIA_CALL(AImageReader_acquireNextImage(reader, &image), return);
 
             const bool isRaw = format==AIMAGE_FORMAT_RAW16 ||
                                format==AIMAGE_FORMAT_RAW12 ||
