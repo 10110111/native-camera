@@ -44,7 +44,6 @@ const std::map<media_status_t, const char*> mediaStatusNames={
     {AMEDIA_OK                              , "OK"},
     {AMEDIACODEC_ERROR_INSUFFICIENT_RESOURCE, "CODEC_ERROR_INSUFFICIENT_RESOURCE"},
     {AMEDIACODEC_ERROR_RECLAIMED            , "CODEC_ERROR_RECLAIMED"},
-    {AMEDIA_ERROR_BASE                      , "ERROR_BASE"},
     {AMEDIA_ERROR_UNKNOWN                   , "ERROR_UNKNOWN"},
     {AMEDIA_ERROR_MALFORMED                 , "ERROR_MALFORMED"},
     {AMEDIA_ERROR_UNSUPPORTED               , "ERROR_UNSUPPORTED"},
