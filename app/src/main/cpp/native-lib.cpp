@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <map>
+#include <cmath>
 #include <string>
 #include <fstream>
 #include <vector>
@@ -7,6 +8,7 @@
 #include <sstream>
 #include <iomanip>
 
+#include <sys/time.h>
 #include <camera/NdkCameraManager.h>
 #include <camera/NdkCameraMetadata.h>
 #include <camera/NdkCameraDevice.h>
@@ -183,11 +185,19 @@ static ACaptureSessionOutputContainer* outputs = nullptr;
 
 std::string getFormattedTimeNow()
 {
-    const auto t=std::time(nullptr);
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+    auto ms=tv.tv_usec/1000.;
+    if(ms>=1000)
+    {
+        ms-=1000;
+        ++tv.tv_sec;
+    }
     struct tm tm_;
-    const auto tm=localtime_r(&t, &tm_);
+    const auto tm=localtime_r(&tv.tv_sec, &tm_);
     std::ostringstream str;
-    str << std::put_time(tm, "%Y%m%d_%H%M%S");
+    str << std::put_time(tm, "%Y%m%d_%H%M%S_");
+    str << std::setw(3) << std::setfill('0') << std::lrint(ms);
     return str.str();
 }
 
