@@ -300,6 +300,13 @@ AImageReader* createImageReader(const AIMAGE_FORMATS desiredFormat, const unsign
                 return;
             }
 
+            // Skip first image, since it'll be blurred
+            if(numberOfTimesCaptured==0)
+            {
+                AImage_delete(image);
+                return;
+            }
+
             const bool isRaw = format==AIMAGE_FORMAT_RAW16 ||
                                format==AIMAGE_FORMAT_RAW12 ||
                                format==AIMAGE_FORMAT_RAW10;
