@@ -114,61 +114,173 @@ std::string errorName(T const& names, ErrorType error)
 const auto desiredRawFormat=AIMAGE_FORMAT_RAW16;
 const auto desiredCookedFormat=AIMAGE_FORMAT_JPEG;
 
+void printRational(std::ostream& os, ACameraMetadata_const_entry const& entry)
+{
+    os << double(entry.data.i32[0 ])/entry.data.i32[1 ] << ','
+       << double(entry.data.i32[2 ])/entry.data.i32[3 ] << ','
+       << double(entry.data.i32[4 ])/entry.data.i32[5 ] << '\n'
+
+       << double(entry.data.i32[6 ])/entry.data.i32[7 ] << ','
+       << double(entry.data.i32[8 ])/entry.data.i32[9 ] << ','
+       << double(entry.data.i32[10])/entry.data.i32[11] << '\n'
+
+       << double(entry.data.i32[12])/entry.data.i32[13] << ','
+       << double(entry.data.i32[14])/entry.data.i32[15] << ','
+       << double(entry.data.i32[16])/entry.data.i32[17] << "\n";
+}
+
+void printIlluminant(std::ostream& os, unsigned i)
+{
+    switch(i)
+    {
+    case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_DAYLIGHT              : os << "DAYLIGHT"; break;
+    case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_FLUORESCENT           : os << "FLUORESCENT"; break;
+    case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_TUNGSTEN              : os << "TUNGSTEN"; break;
+    case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_FLASH                 : os << "FLASH"; break;
+    case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_FINE_WEATHER          : os << "FINE_WEATHER"; break;
+    case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_CLOUDY_WEATHER        : os << "CLOUDY_WEATHER"; break;
+    case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_SHADE                 : os << "SHADE"; break;
+    case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_DAYLIGHT_FLUORESCENT  : os << "DAYLIGHT_FLUORESCENT"; break;
+    case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_DAY_WHITE_FLUORESCENT : os << "DAY_WHITE_FLUORESCENT"; break;
+    case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_COOL_WHITE_FLUORESCENT: os << "COOL_WHITE_FLUORESCENT"; break;
+    case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_WHITE_FLUORESCENT     : os << "WHITE_FLUORESCENT"; break;
+    case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_STANDARD_A            : os << "STANDARD_A"; break;
+    case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_STANDARD_B            : os << "STANDARD_B"; break;
+    case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_STANDARD_C            : os << "STANDARD_C"; break;
+    case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_D55                   : os << "D55"; break;
+    case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_D65                   : os << "D65"; break;
+    case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_D75                   : os << "D75"; break;
+    case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_D50                   : os << "D50"; break;
+    case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_ISO_STUDIO_TUNGSTEN   : os << "ISO_STUDIO_TUNGSTEN"; break;
+    default: os << i;
+    }
+}
+
 void getCamProps(ACameraManager *cameraManager, const char *id,
                  const AIMAGE_FORMATS formatToFindA, unsigned& bestWidthA, unsigned& bestHeightA,
                  const AIMAGE_FORMATS formatToFindB, unsigned& bestWidthB, unsigned& bestHeightB)
 {
-    ACameraMetadata *metadataObj;
-    ACameraManager_getCameraCharacteristics(cameraManager, id, &metadataObj);
+    ACameraMetadata *metadata;
+    ACameraManager_getCameraCharacteristics(cameraManager, id, &metadata);
 
-    ACameraMetadata_const_entry entry = {0};
-    ACameraMetadata_getConstEntry(metadataObj, ACAMERA_SENSOR_INFO_EXPOSURE_TIME_RANGE, &entry);
+    ACameraMetadata_const_entry entry{};
+    std::ostringstream file;
+    file << "Camera " << id << " metadata:\n";
 
-    const long long minExposure = entry.data.i64[0];
-    const long long maxExposure = entry.data.i64[1];
-    LOGD("camProps: minExposure=%lld, maxExposure=%lld", minExposure, maxExposure);
+    CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_INFO_EXPOSURE_TIME_RANGE, &entry),)
+    else file << "Exposure range: " << entry.data.i32[0] << " - " << entry.data.i32[1] << "\n";
 
-    // sensitivity
-    ACameraMetadata_getConstEntry(metadataObj, ACAMERA_SENSOR_INFO_SENSITIVITY_RANGE, &entry);
+    CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_INFO_SENSITIVITY_RANGE, &entry),)
+    else file << "Sensitivity range: " << entry.data.i32[0] << " - " << entry.data.i32[1] << "\n";
 
-    const int minSensitivity = entry.data.i32[0];
-    const int maxSensitivity = entry.data.i32[1];
+    CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_BLACK_LEVEL_PATTERN, &entry),)
+    else file << "Black level pattern: " << entry.data.i32[0] << ", " << entry.data.i32[1]
+                                 << ", " << entry.data.i32[2] << ", " << entry.data.i32[3] << "\n";
 
-    LOGD("camProps: minSensitivity=%d, maxSensitivity=%d", minSensitivity, maxSensitivity);
+    CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_REFERENCE_ILLUMINANT1, &entry),)
+    else
+    {
+        file << "Sensor reference illuminant 1: ";
+        printIlluminant(file, entry.data.u8[0]);
+        file << '\n';
+    }
 
-    ACameraMetadata_getConstEntry(metadataObj, ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS, &entry);
+    CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_REFERENCE_ILLUMINANT2, &entry),)
+    else
+    {
+        file << "Sensor reference illuminant 2: ";
+        printIlluminant(file, entry.data.u8[0]);
+        file << '\n';
+    }
+
+    CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_CALIBRATION_TRANSFORM1, &entry),)
+    else
+    {
+        file << "Sensor calibration transform 1:\n";
+        printRational(file, entry);
+        file << "\n";
+    }
+
+    CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_CALIBRATION_TRANSFORM2, &entry),)
+    else
+    {
+        file << "Sensor calibration transform 2:\n";
+        printRational(file, entry);
+        file << "\n";
+    }
+
+    CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_COLOR_TRANSFORM1, &entry),)
+    else
+    {
+        file << "Sensor color transform 1:\n";
+        printRational(file, entry);
+        file << "\n";
+    }
+
+    CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_COLOR_TRANSFORM2, &entry),)
+    else
+    {
+        file << "Sensor color transform 2:\n";
+        printRational(file, entry);
+        file << "\n";
+    }
+
+    CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_FORWARD_MATRIX1, &entry),)
+    else
+    {
+        file << "Sensor forward matrix 1:\n";
+        printRational(file, entry);
+        file << "\n";
+    }
+
+    CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_FORWARD_MATRIX2, &entry),)
+    else
+    {
+        file << "Sensor forward matrix 2:\n";
+        printRational(file, entry);
+        file << "\n";
+    }
 
     bestWidthA=bestHeightA=bestWidthB=bestHeightB=0;
-    for (int i = 0; i < entry.count; i += 4)
+    CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS, &entry),)
+    else
     {
-        // We are only interested in output streams, so skip input stream
-        const bool input = entry.data.i32[i + 3];
-        if (input)
-            continue;
+        for (int i = 0; i < entry.count; i += 4)
+        {
+            // We are only interested in output streams, so skip input stream
+            const bool isInput = entry.data.i32[i + 3];
+            if (isInput) continue;
 
-        const auto format = entry.data.i32[i + 0];
-        const int width = entry.data.i32[i + 1];
-        const int height = entry.data.i32[i + 2];
-        const auto it=formatNames.find(format);
-        const auto formatName = it==formatNames.end() ? std::to_string(format) : it->second;
-        LOGD("camProps: format: %s, maxWidth=%d, maxHeight=%d", formatName.c_str(), width, height);
-        if(format==formatToFindA && uint64_t(width)*height > uint64_t(bestWidthA)*bestHeightA)
-        {
-            bestWidthA=width;
-            bestHeightA=height;
-        }
-        else if(format==formatToFindB && uint64_t(width)*height > uint64_t(bestWidthB)*bestHeightB)
-        {
-            bestWidthB=width;
-            bestHeightB=height;
+            const auto format = entry.data.i32[i + 0];
+            const int width = entry.data.i32[i + 1];
+            const int height = entry.data.i32[i + 2];
+            const auto it=formatNames.find(format);
+            const auto formatName = it==formatNames.end() ? std::to_string(format) : it->second;
+            file << "Format: " << formatName << ", width=" << width << ", height=" << height << "\n";
+            if(format==formatToFindA && uint64_t(width)*height > uint64_t(bestWidthA)*bestHeightA)
+            {
+                bestWidthA=width;
+                bestHeightA=height;
+            }
+            else if(format==formatToFindB && uint64_t(width)*height > uint64_t(bestWidthB)*bestHeightB)
+            {
+                bestWidthB=width;
+                bestHeightB=height;
+            }
         }
     }
 
-    // cam facing
-    ACameraMetadata_getConstEntry(metadataObj, ACAMERA_SENSOR_ORIENTATION, &entry);
+    CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_ORIENTATION, &entry),)
+    else
+    {
+        const int orientation = entry.data.i32[0];
+        file << "Orientation: " << orientation << "\n";
+    }
 
-    const int orientation = entry.data.i32[0];
-    LOGD("camProps: orientation: %d", orientation);
+    // Log seems to truncate long walls of text, so feed it line-by-line
+    std::istringstream str(file.str());
+    for(std::string line; std::getline(str, line, '\n');)
+        LOGD("%s", line.c_str());
 }
 
 
@@ -221,6 +333,7 @@ static ACaptureSessionOutput* jpegImageOutput = nullptr;
 static ACaptureSessionOutputContainer* outputs = nullptr;
 static ACameraCaptureSession* captureSession = nullptr;
 
+#define FILE_PATH_PREFIX "/data/data/eu.sisik.cam/"
 std::string getFormattedTimeNow()
 {
     struct timeval tv;
@@ -245,17 +358,101 @@ static ACameraCaptureSession_captureCallbacks captureCallbacks
     .onCaptureCompleted = [](void*, ACameraCaptureSession*, ACaptureRequest*, const ACameraMetadata* metadata)
     {
         LOGD("Capture completed");
-        ACameraMetadata_const_entry entry{};
-        if(const auto res=ACameraMetadata_getConstEntry(metadata, ACAMERA_COLOR_CORRECTION_TRANSFORM, &entry); res==ACAMERA_OK)
+        const auto filename = FILE_PATH_PREFIX "IMG_"+getFormattedTimeNow()+".settings";
+        std::ofstream file(filename);
+        if(!file)
         {
-            LOGD("Color correction matrix:\n%g %g %g\n%g %g %g\n%g %g %g"
-, double(entry.data.i32[0 ])/entry.data.i32[1 ], double(entry.data.i32[2 ])/entry.data.i32[3 ], double(entry.data.i32[4 ])/entry.data.i32[5 ]
-, double(entry.data.i32[6 ])/entry.data.i32[7 ], double(entry.data.i32[8 ])/entry.data.i32[9 ], double(entry.data.i32[10])/entry.data.i32[11]
-, double(entry.data.i32[12])/entry.data.i32[13], double(entry.data.i32[14])/entry.data.i32[15], double(entry.data.i32[16])/entry.data.i32[17]
-                );
+            LOGD("Capture callback: failed to open \"%s\"", filename.c_str());
+            return;
         }
+
+        ACameraMetadata_const_entry entry{};
+        CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_COLOR_CORRECTION_TRANSFORM, &entry),)
         else
-            LOGE("Failed to color correction transform: error %d", int(res));
+        {
+            file << "Color correction matrix:\n";
+            printRational(file, entry);
+            file << "\n";
+        }
+
+        CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_COLOR_CORRECTION_GAINS, &entry),)
+        else
+        {
+            file << "Color correction gains: " << entry.data.f[0] << ", " << entry.data.f[1]
+                                       << ", " << entry.data.f[2] << ", " << entry.data.f[3] << "\n";
+        }
+
+        CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_CONTROL_AF_STATE, &entry),)
+        else
+        {
+            file << "Current state of auto-focus algorithm: ";
+            switch(entry.data.u8[0])
+            {
+            case ACAMERA_CONTROL_AF_STATE_INACTIVE          :  file << "INACTIVE\n"; break;
+            case ACAMERA_CONTROL_AF_STATE_PASSIVE_SCAN      :  file << "PASSIVE_SCAN\n"; break;
+            case ACAMERA_CONTROL_AF_STATE_PASSIVE_FOCUSED   :  file << "PASSIVE_FOCUSED\n"; break;
+            case ACAMERA_CONTROL_AF_STATE_ACTIVE_SCAN       :  file << "ACTIVE_SCAN\n"; break;
+            case ACAMERA_CONTROL_AF_STATE_FOCUSED_LOCKED    :  file << "FOCUSED_LOCKED\n"; break;
+            case ACAMERA_CONTROL_AF_STATE_NOT_FOCUSED_LOCKED:  file << "NOT_FOCUSED_LOCKED\n"; break;
+            case ACAMERA_CONTROL_AF_STATE_PASSIVE_UNFOCUSED :  file << "PASSIVE_UNFOCUSED\n"; break;
+            default: file << +entry.data.u8[0] << "\n";
+            }
+        }
+
+        CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_LENS_APERTURE, &entry),)
+        else
+        {
+            file << "Aperture: " << entry.data.f[0] << "\n";
+        }
+
+        CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_LENS_FOCAL_LENGTH, &entry),)
+        else
+        {
+            file << "Focal length: " << entry.data.f[0] << "\n";
+        }
+
+        CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_LENS_STATE, &entry),)
+        else
+        {
+            file << "Lens state: ";
+            switch(entry.data.u8[0])
+            {
+            case ACAMERA_LENS_STATE_STATIONARY: file << "stationary\n"; break;
+            case ACAMERA_LENS_STATE_MOVING    : file << "moving\n"; break;
+            default: file << +entry.data.u8[0] << "\n";
+            }
+        }
+
+        CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_DYNAMIC_BLACK_LEVEL, &entry),)
+        else
+        {
+            file << "Dynamic black level: " << entry.data.f[0] << ", " << entry.data.f[1]
+                                    << ", " << entry.data.f[2] << ", " << entry.data.f[3] << "\n";
+        }
+
+        CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_DYNAMIC_WHITE_LEVEL, &entry),)
+        else
+        {
+            file << "Dynamic white level: " << entry.data.i32[0] << "\n";
+        }
+
+        CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_EXPOSURE_TIME, &entry),)
+        else
+        {
+            file << "Exposure time: " << entry.data.i64[0] << "\n";
+        }
+
+        CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_SENSITIVITY, &entry),)
+        else
+        {
+            file << "ISO sensitivity: " << entry.data.i32[0] << "\n";
+        }
+
+        CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_TIMESTAMP, &entry),)
+        else
+        {
+            file << "Timestamp, ns: " << entry.data.i64[0] << "\n";
+        }
 
         if(numberOfTimesCaptured++) return;
         CHECK_CAM_CALL(ACameraCaptureSession_capture(captureSession, &captureCallbacks, 1, &captureRequest, nullptr),);
@@ -310,7 +507,7 @@ AImageReader* createImageReader(const AIMAGE_FORMATS desiredFormat, const unsign
             const bool isRaw = format==AIMAGE_FORMAT_RAW16 ||
                                format==AIMAGE_FORMAT_RAW12 ||
                                format==AIMAGE_FORMAT_RAW10;
-            const auto filename="/data/data/eu.sisik.cam/IMG_"+getFormattedTimeNow()+(isRaw?".raw":".jpg");
+            const auto filename=FILE_PATH_PREFIX "IMG_"+getFormattedTimeNow()+(isRaw?".raw":".jpg");
             future=std::async(std::launch::async, [image,formatName,filename,isRaw]
                 {
                     LOGD("%s: starting data saving thread", formatName.c_str());
