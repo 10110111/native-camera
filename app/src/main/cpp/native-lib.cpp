@@ -404,13 +404,13 @@ static ACameraCaptureSession_captureCallbacks captureCallbacks
         CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_LENS_APERTURE, &entry),)
         else
         {
-            file << "Aperture: " << entry.data.f[0] << "\n";
+            file << "Aperture: f/" << entry.data.f[0] << "\n";
         }
 
         CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_LENS_FOCAL_LENGTH, &entry),)
         else
         {
-            file << "Focal length: " << entry.data.f[0] << "\n";
+            file << "Focal length: " << entry.data.f[0] << " mm\n";
         }
 
         CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_LENS_STATE, &entry),)
@@ -441,7 +441,7 @@ static ACameraCaptureSession_captureCallbacks captureCallbacks
         CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_EXPOSURE_TIME, &entry),)
         else
         {
-            file << "Exposure time: " << entry.data.i64[0] << "\n";
+            file << "Exposure time: " << entry.data.i64[0] << " ns\n";
         }
 
         CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_SENSITIVITY, &entry),)
@@ -453,7 +453,7 @@ static ACameraCaptureSession_captureCallbacks captureCallbacks
         CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_TIMESTAMP, &entry),)
         else
         {
-            file << "Timestamp, ns: " << entry.data.i64[0] << "\n";
+            file << "Timestamp: " << entry.data.i64[0] << " ns\n";
         }
 
         if(numberOfTimesCaptured++) return;
