@@ -175,6 +175,23 @@ void getCamProps(std::ostream& file, ACameraManager *cameraManager, const char *
     CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_INFO_SENSITIVITY_RANGE, &entry),)
     else file << "Sensitivity range: " << entry.data.i32[0] << " - " << entry.data.i32[1] << "\n";
 
+    CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_INFO_COLOR_FILTER_ARRANGEMENT, &entry),)
+    else
+    {
+        file << "Color filter arrangement: ";
+        switch(entry.data.u8[0])
+        {
+        case ACAMERA_SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_RGGB: file << "RGGB"; break;
+        case ACAMERA_SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_GRBG: file << "GRBG"; break;
+        case ACAMERA_SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_GBRG: file << "GBRG"; break;
+        case ACAMERA_SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_BGGR: file << "BGGR"; break;
+        case ACAMERA_SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_RGB : file << "RGB (non-Bayer)" ; break;
+        case ACAMERA_SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_MONO: file << "monochrome"; break;
+        case ACAMERA_SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_NIR : file << "NIR (monochrome)" ; break;
+        }
+        file << "\n";
+    }
+
     CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_BLACK_LEVEL_PATTERN, &entry),)
     else file << "Black level pattern: " << entry.data.i32[0] << ", " << entry.data.i32[1]
                                  << ", " << entry.data.i32[2] << ", " << entry.data.i32[3] << "\n";
