@@ -360,6 +360,13 @@ static ACameraCaptureSession_captureCallbacks captureCallbacks
     .onCaptureCompleted = [](void*, ACameraCaptureSession*, ACaptureRequest*, const ACameraMetadata* metadata)
     {
         LOGD("Capture completed");
+
+        if(numberOfTimesCaptured++==0)
+        {
+            LOGD("Skipping frame");
+            return;
+        }
+
         const auto filename = FILE_PATH_PREFIX "IMG_"+getFormattedTimeNow()+".settings";
         std::ofstream file(filename);
         if(!file)
@@ -456,7 +463,6 @@ static ACameraCaptureSession_captureCallbacks captureCallbacks
             file << "Timestamp: " << entry.data.i64[0] << " ns\n";
         }
 
-        if(numberOfTimesCaptured++) return;
         CHECK_CAM_CALL(ACameraCaptureSession_capture(captureSession, &captureCallbacks, 1, &captureRequest, nullptr),);
     },
     .onCaptureFailed = [](void*, ACameraCaptureSession*, ACaptureRequest*, ACameraCaptureFailure*)
