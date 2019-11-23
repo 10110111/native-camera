@@ -114,24 +114,26 @@ std::string errorName(T const& names, ErrorType error)
 const auto desiredRawFormat=AIMAGE_FORMAT_RAW16;
 const auto desiredCookedFormat=AIMAGE_FORMAT_JPEG;
 
-void printRational(std::ostream& os, ACameraMetadata_const_entry const& entry)
+void printRationalMatrix(std::ostream& os, ACameraMetadata_const_entry const& entry)
 {
-    os << double(entry.data.i32[0 ])/entry.data.i32[1 ] << ','
-       << double(entry.data.i32[2 ])/entry.data.i32[3 ] << ','
-       << double(entry.data.i32[4 ])/entry.data.i32[5 ] << '\n'
+    const auto*const m=entry.data.i32;
+    os << double(m[0 ])/m[1 ] << ','
+       << double(m[2 ])/m[3 ] << ','
+       << double(m[4 ])/m[5 ] << '\n'
 
-       << double(entry.data.i32[6 ])/entry.data.i32[7 ] << ','
-       << double(entry.data.i32[8 ])/entry.data.i32[9 ] << ','
-       << double(entry.data.i32[10])/entry.data.i32[11] << '\n'
+       << double(m[6 ])/m[7 ] << ','
+       << double(m[8 ])/m[9 ] << ','
+       << double(m[10])/m[11] << '\n'
 
-       << double(entry.data.i32[12])/entry.data.i32[13] << ','
-       << double(entry.data.i32[14])/entry.data.i32[15] << ','
-       << double(entry.data.i32[16])/entry.data.i32[17] << "\n";
+       << double(m[12])/m[13] << ','
+       << double(m[14])/m[15] << ','
+       << double(m[16])/m[17] << "\n";
 }
 
-void printIlluminant(std::ostream& os, unsigned i)
+void printIlluminant(std::ostream& os, ACameraMetadata_const_entry const& entry)
 {
-    switch(i)
+    const unsigned illum=entry.data.u8[0];
+    switch(illum)
     {
     case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_DAYLIGHT              : os << "DAYLIGHT"; break;
     case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_FLUORESCENT           : os << "FLUORESCENT"; break;
@@ -152,7 +154,7 @@ void printIlluminant(std::ostream& os, unsigned i)
     case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_D75                   : os << "D75"; break;
     case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_D50                   : os << "D50"; break;
     case ACAMERA_SENSOR_REFERENCE_ILLUMINANT1_ISO_STUDIO_TUNGSTEN   : os << "ISO_STUDIO_TUNGSTEN"; break;
-    default: os << i;
+    default: os << illum;
     }
 }
 
@@ -181,7 +183,7 @@ void getCamProps(ACameraManager *cameraManager, const char *id,
     else
     {
         file << "Sensor reference illuminant 1: ";
-        printIlluminant(file, entry.data.u8[0]);
+        printIlluminant(file, entry);
         file << '\n';
     }
 
@@ -189,7 +191,7 @@ void getCamProps(ACameraManager *cameraManager, const char *id,
     else
     {
         file << "Sensor reference illuminant 2: ";
-        printIlluminant(file, entry.data.u8[0]);
+        printIlluminant(file, entry);
         file << '\n';
     }
 
@@ -197,7 +199,7 @@ void getCamProps(ACameraManager *cameraManager, const char *id,
     else
     {
         file << "Sensor calibration transform 1:\n";
-        printRational(file, entry);
+        printRationalMatrix(file, entry);
         file << "\n";
     }
 
@@ -205,7 +207,7 @@ void getCamProps(ACameraManager *cameraManager, const char *id,
     else
     {
         file << "Sensor calibration transform 2:\n";
-        printRational(file, entry);
+        printRationalMatrix(file, entry);
         file << "\n";
     }
 
@@ -213,7 +215,7 @@ void getCamProps(ACameraManager *cameraManager, const char *id,
     else
     {
         file << "Sensor color transform 1:\n";
-        printRational(file, entry);
+        printRationalMatrix(file, entry);
         file << "\n";
     }
 
@@ -221,7 +223,7 @@ void getCamProps(ACameraManager *cameraManager, const char *id,
     else
     {
         file << "Sensor color transform 2:\n";
-        printRational(file, entry);
+        printRationalMatrix(file, entry);
         file << "\n";
     }
 
@@ -229,7 +231,7 @@ void getCamProps(ACameraManager *cameraManager, const char *id,
     else
     {
         file << "Sensor forward matrix 1:\n";
-        printRational(file, entry);
+        printRationalMatrix(file, entry);
         file << "\n";
     }
 
@@ -237,7 +239,7 @@ void getCamProps(ACameraManager *cameraManager, const char *id,
     else
     {
         file << "Sensor forward matrix 2:\n";
-        printRational(file, entry);
+        printRationalMatrix(file, entry);
         file << "\n";
     }
 
@@ -371,7 +373,7 @@ static ACameraCaptureSession_captureCallbacks captureCallbacks
         else
         {
             file << "Color correction matrix:\n";
-            printRational(file, entry);
+            printRationalMatrix(file, entry);
             file << "\n";
         }
 
