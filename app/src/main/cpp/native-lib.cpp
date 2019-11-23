@@ -111,6 +111,7 @@ std::string errorName(T const& names, ErrorType error)
         HANDLER_STATEMENT; \
     }
 
+std::string cameraPropsString;
 const auto desiredRawFormat=AIMAGE_FORMAT_RAW16;
 const auto desiredCookedFormat=AIMAGE_FORMAT_JPEG;
 
@@ -158,7 +159,7 @@ void printIlluminant(std::ostream& os, ACameraMetadata_const_entry const& entry)
     }
 }
 
-void getCamProps(ACameraManager *cameraManager, const char *id,
+void getCamProps(std::ostream& file, ACameraManager *cameraManager, const char *id,
                  const AIMAGE_FORMATS formatToFindA, unsigned& bestWidthA, unsigned& bestHeightA,
                  const AIMAGE_FORMATS formatToFindB, unsigned& bestWidthB, unsigned& bestHeightB)
 {
@@ -166,7 +167,6 @@ void getCamProps(ACameraManager *cameraManager, const char *id,
     ACameraManager_getCameraCharacteristics(cameraManager, id, &metadata);
 
     ACameraMetadata_const_entry entry{};
-    std::ostringstream file;
     file << "Camera " << id << " metadata:\n";
 
     CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_INFO_EXPOSURE_TIME_RANGE, &entry),)
@@ -278,11 +278,6 @@ void getCamProps(ACameraManager *cameraManager, const char *id,
         const int orientation = entry.data.i32[0];
         file << "Orientation: " << orientation << "\n";
     }
-
-    // Log seems to truncate long walls of text, so feed it line-by-line
-    std::istringstream str(file.str());
-    for(std::string line; std::getline(str, line, '\n');)
-        LOGD("%s", line.c_str());
 }
 
 
@@ -363,7 +358,9 @@ static ACameraCaptureSession_captureCallbacks captureCallbacks
 
         if(numberOfTimesCaptured++==0)
         {
-            LOGD("Skipping frame");
+            LOGD("Skipping frame, retrying a capture");
+
+            CHECK_CAM_CALL(ACameraCaptureSession_capture(captureSession, &captureCallbacks, 1, &captureRequest, nullptr),);
             return;
         }
 
@@ -463,7 +460,9 @@ static ACameraCaptureSession_captureCallbacks captureCallbacks
             file << "Timestamp: " << entry.data.i64[0] << " ns\n";
         }
 
-        CHECK_CAM_CALL(ACameraCaptureSession_capture(captureSession, &captureCallbacks, 1, &captureRequest, nullptr),);
+
+        file << "\n------------------ Static camera characteristics ------------------\n";
+        file << cameraPropsString;
     },
     .onCaptureFailed = [](void*, ACameraCaptureSession*, ACaptureRequest*, ACameraCaptureFailure*)
                        { LOGE("***************** Capture failed! **********************"); },
@@ -577,8 +576,13 @@ static void initCam()
 
     unsigned imageWidthCooked, imageHeightCooked;
     unsigned imageWidthRaw, imageHeightRaw;
-    getCamProps(cameraManager, id.c_str(), desiredRawFormat, imageWidthRaw, imageHeightRaw,
-                                           desiredCookedFormat, imageWidthCooked, imageHeightCooked);
+    {
+        std::ostringstream props;
+        getCamProps(props, cameraManager, id.c_str(),
+                    desiredRawFormat, imageWidthRaw, imageHeightRaw,
+                    desiredCookedFormat, imageWidthCooked, imageHeightCooked);
+        cameraPropsString=props.str();
+    }
     if(!imageWidthRaw || !imageHeightRaw)
     {
         LOGD("Desired raw format doesn't appear to be supported, giving up");
