@@ -330,7 +330,7 @@ static ACaptureSessionOutput* jpegImageOutput = nullptr;
 static ACaptureSessionOutputContainer* outputs = nullptr;
 static ACameraCaptureSession* captureSession = nullptr;
 
-#define FILE_PATH_PREFIX "/data/data/eu.sisik.cam/"
+#define FILE_PATH_PREFIX "/storage/emulated/0/"
 std::string getFormattedTimeNow()
 {
     struct timeval tv;
@@ -368,7 +368,8 @@ static ACameraCaptureSession_captureCallbacks captureCallbacks
         std::ofstream file(filename);
         if(!file)
         {
-            LOGD("Capture callback: failed to open \"%s\"", filename.c_str());
+            const auto err=strerror(errno);
+            LOGD("Capture callback: failed to open \"%s\": %s", filename.c_str(), err);
             return;
         }
 
@@ -549,7 +550,8 @@ AImageReader* createImageReader(const AIMAGE_FORMATS desiredFormat, const unsign
                     }
                     else
                     {
-                        LOGD("%s: Failed to open \"%s\"", formatName.c_str(), filename.c_str());
+                        const auto err=strerror(errno);
+                        LOGD("%s: Failed to open \"%s\": %s", formatName.c_str(), filename.c_str(), err);
                     }
 
                     AImage_delete(image);

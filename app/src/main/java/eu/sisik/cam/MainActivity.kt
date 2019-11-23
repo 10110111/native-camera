@@ -36,6 +36,14 @@ class MainActivity : Activity() {
         } else {
             initCam()
         }
+
+        val filePermission = android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+        if (Build.VERSION.SDK_INT >= 23 &&
+                checkSelfPermission(filePermission) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(filePermission), FILE_PERMISSION_CODE)
+        } else {
+            initCam()
+        }
     }
 
     override fun onPause() {
@@ -48,6 +56,11 @@ class MainActivity : Activity() {
         if (requestCode == CAM_PERMISSION_CODE
                 && grantResults?.get(0) != PackageManager.PERMISSION_GRANTED) {
             Toast.makeText(this, "This app requires camera permission", Toast.LENGTH_SHORT).show()
+            finish()
+        }
+        if (requestCode == FILE_PERMISSION_CODE
+                && grantResults?.get(0) != PackageManager.PERMISSION_GRANTED) {
+            Toast.makeText(this, "I want to store files!", Toast.LENGTH_SHORT).show()
             finish()
         }
     }
@@ -73,6 +86,7 @@ class MainActivity : Activity() {
 
     companion object {
         val CAM_PERMISSION_CODE = 666
+        val FILE_PERMISSION_CODE = 555
 
         init {
             System.loadLibrary("native-lib")
