@@ -406,6 +406,15 @@ static ACameraCaptureSession_captureCallbacks captureCallbacks
                                        << ", " << entry.data.f[2] << ", " << entry.data.f[3] << "\n";
         }
 
+        CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_NEUTRAL_COLOR_POINT, &entry),)
+        else
+        {
+            const auto*const m=entry.data.i32;
+            file << "Neutral color point in sensor colorspace: " << double(m[0])/m[1] << ','
+                                                                 << double(m[2])/m[3] << ','
+                                                                 << double(m[4])/m[5] << "\n";
+        }
+
         CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_CONTROL_AF_STATE, &entry),)
         else
         {
