@@ -289,6 +289,28 @@ void getCamProps(std::ostream& file, ACameraManager *cameraManager, const char *
         }
     }
 
+    CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_REQUEST_AVAILABLE_CAPABILITIES, &entry),)
+    else
+    {
+        file << "Capabilities:\n";
+        for(int i=0;i<entry.count;++i)
+        {
+            switch(entry.data.u8[i])
+            {
+            case ACAMERA_REQUEST_AVAILABLE_CAPABILITIES_BACKWARD_COMPATIBLE   : file << "BACKWARD_COMPATIBLE"; break;
+            case ACAMERA_REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR         : file << "MANUAL_SENSOR"; break;
+            case ACAMERA_REQUEST_AVAILABLE_CAPABILITIES_MANUAL_POST_PROCESSING: file << "MANUAL_POST_PROCESSING"; break;
+            case ACAMERA_REQUEST_AVAILABLE_CAPABILITIES_RAW                   : file << "RAW"; break;
+            case ACAMERA_REQUEST_AVAILABLE_CAPABILITIES_READ_SENSOR_SETTINGS  : file << "READ_SENSOR_SETTINGS"; break;
+            case ACAMERA_REQUEST_AVAILABLE_CAPABILITIES_BURST_CAPTURE         : file << "BURST_CAPTURE"; break;
+            case ACAMERA_REQUEST_AVAILABLE_CAPABILITIES_DEPTH_OUTPUT          : file << "DEPTH_OUTPUT"; break;
+            default: file << "0x" << std::hex << +entry.data.u8[i] << std::dec;
+            }
+            file << '\n';
+        }
+        file << '\n';
+    }
+
     CHECK_CAM_CALL(ACameraMetadata_getConstEntry(metadata, ACAMERA_SENSOR_ORIENTATION, &entry),)
     else
     {
